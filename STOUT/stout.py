@@ -1,17 +1,18 @@
 # Initializing and importing necessary libararies
-
-import tensorflow as tf
-from rdkit import Chem
+"""  code which contains the inference functions """
 import os
 import pickle
-import pystow
 import re
+import pystow
+import tensorflow as tf
+from rdkit import Chem
+
 from .repack import helper
+
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
-
 # Print tensorflow version
-print("Tensorflow version: "+tf.__version__)
+print("Tensorflow version: " + tf.__version__)
 
 # Always select a GPU if available
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
@@ -25,19 +26,18 @@ for gpu in gpus:
 default_path = pystow.join("STOUT-V2", "models")
 
 # model download location
-model_url = "https://storage.googleapis.com/decimer_weights/models.zip"
-model_path = str(default_path) + "/translator_forward/"
+MODEL_URL = "https://storage.googleapis.com/decimer_weights/models.zip"
+MODEL_PATH = str(default_path) + "/translator_forward/"
 
 # download models to a default location
-if not os.path.exists(model_path):
-    helper.download_trained_weights(model_url, default_path)
-
-
-# Load the packed model forward
-reloaded_forward = tf.saved_model.load(default_path.as_posix()+"/translator_forward")
+if not os.path.exists(MODEL_PATH):
+    helper.download_trained_weights(MODEL_URL, default_path)
 
 # Load the packed model forward
-reloaded_reverse = tf.saved_model.load(default_path.as_posix()+"/translator_reverse")
+reloaded_forward = tf.saved_model.load(default_path.as_posix() + "/translator_forward")
+
+# Load the packed model forward
+reloaded_reverse = tf.saved_model.load(default_path.as_posix() + "/translator_reverse")
 
 
 def translate_forward(smiles: str) -> str:
@@ -53,9 +53,12 @@ def translate_forward(smiles: str) -> str:
     """
 
     # Load important pickle files which consists the tokenizers and the maxlength setting
-    inp_lang = pickle.load(open(default_path.as_posix()+"/assets/tokenizer_input.pkl", "rb"))
-    targ_lang = pickle.load(open(default_path.as_posix()+"/assets/tokenizer_target.pkl", "rb"))
-    inp_max_length = pickle.load(open(default_path.as_posix()+"/assets/max_length_inp.pkl", "rb"))
+    with open(default_path.as_posix() + "/assets/tokenizer_input.pkl", "rb") as file :
+        inp_lang = pickle.load(file)
+    with open(default_path.as_posix() + "/assets/tokenizer_target.pkl", "rb") as file :
+        targ_lang = pickle.load(file)
+    with open(default_path.as_posix() + "/assets/tokenizer_target.pkl", "rb") as file :
+        inp_max_length = pickle.load(file)
     if len(smiles) == 0:
         return ''
     smiles = smiles.replace('\\/', '/')
@@ -63,13 +66,13 @@ def translate_forward(smiles: str) -> str:
     if mol:
         smiles = Chem.MolToSmiles(mol, kekuleSmiles=True)
         splitted_list = list(smiles)
-        tokenized_SMILES = re.sub(r"\s+(?=[a-z])", "", " ".join(map(str, splitted_list)))
-        decoded = helper.tokenize_input(tokenized_SMILES, inp_lang, inp_max_length)
+        tokenized_smiles = re.sub(r"\s+(?=[a-z])", "", " ".join(map(str, splitted_list)))
+        decoded = helper.tokenize_input(tokenized_smiles, inp_lang, inp_max_length)
         result_predited = reloaded_forward(decoded)
         result = helper.detokenize_output(result_predited, targ_lang)
         return result
-    else:
-        return "Could not generate IUPAC name from invalid SMILES."
+
+    return "Could not generate IUPAC name from invalid SMILES."
 
 
 def translate_reverse(iupacname: str) -> str:
@@ -85,13 +88,16 @@ def translate_reverse(iupacname: str) -> str:
     """
 
     # Load important pickle files which consists the tokenizers and the maxlength setting
-    targ_lang = pickle.load(open(default_path.as_posix()+"/assets/tokenizer_input.pkl", "rb"))
-    inp_lang = pickle.load(open(default_path.as_posix()+"/assets/tokenizer_target.pkl", "rb"))
-    inp_max_length = pickle.load(open(default_path.as_posix()+"/assets/max_length_targ.pkl", "rb"))
+    with open(default_path.as_posix() + "/assets/tokenizer_input.pkl", "rb") as file:
+        targ_lang = pickle.load(file)
+    with open(default_path.as_posix() + "/assets/tokenizer_target.pkl", "rb") as file:
+        inp_lang = pickle.load(file)
+    with open(default_path.as_posix() + "/assets/max_length_targ.pkl", "rb") as file:
+        inp_max_length = pickle.load(file)
 
     splitted_list = list(iupacname)
-    tokenized_IUPACname = " ".join(map(str, splitted_list))
-    decoded = helper.tokenize_input(tokenized_IUPACname, inp_lang, inp_max_length)
+    tokenized_iupac_name = " ".join(map(str, splitted_list))
+    decoded = helper.tokenize_input(tokenized_iupac_name, inp_lang, inp_max_length)
 
     result_predited = reloaded_reverse(decoded)
     result = helper.detokenize_output(result_predited, targ_lang)

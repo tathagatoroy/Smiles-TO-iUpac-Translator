@@ -4,9 +4,9 @@ This helps to reduce the clutter and for faster inference functions.
 """
 # Initializing and importing necessary libararies
 
-import tensorflow as tf
 import os
 import pickle
+import tensorflow as tf
 import transformer_model_4_repack as nmt_model_transformer
 import helper
 
@@ -26,69 +26,77 @@ for gpu in gpus:
     tf.config.experimental.set_memory_growth(gpu, True)
 
 # Load important pickle files which consists the tokenizers and the maxlength setting
-inp_lang = pickle.load(open("tokenizer_input.pkl", "rb"))
-targ_lang = pickle.load(open("tokenizer_target.pkl", "rb"))
-inp_max_length = pickle.load(open("max_length_inp.pkl", "rb"))
-targ_max_length = pickle.load(open("max_length_targ.pkl", "rb"))
+with open("tokenizer_input.pkl", "rb") as file :
+    inp_lang = pickle.load(file)
+with open("tokenizer_target.pkl", "rb") as file :
+    targ_lang = pickle.load(file)
+with open("max_length_inp.pkl", "rb") as file :
+    inp_max_length = pickle.load(file)
+with open("max_length_targ.pkl", "rb") as file :
+    targ_max_length = pickle.load(file)
 input_vocab_size = len(inp_lang.word_index) + 1
 target_vocab_size = len(targ_lang.word_index) + 1
 print(inp_max_length)
 
 # Load the original Network parameters
-num_layer = 4
-d_model = 512
-dff = 2048
-num_heads = 8
-dropout_rate = 0.1
+NUM_LAYER = 4
+D_MODEL = 512
+DFF = 2048
+NUM_HEADS = 8
+DROPOUT_RATE = 0.1
 
 # Initialize the Transformer and the optimizer
 transformer = nmt_model_transformer.Transformer(
-    num_layer,
-    d_model,
-    num_heads,
-    dff,
+    NUM_LAYER,
+    D_MODEL,
+    NUM_HEADS,
+    DFF,
     input_vocab_size,
     target_vocab_size,
     inp_max_length,
     targ_max_length,
-    rate=dropout_rate,
+    rate=DROPOUT_RATE,
 )
 
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.00051)
 
 # Restarore the last known best performing checkpoint of the trained model
-checkpoint_path = "100mil_reverse_character"
+CHECKPOINT_PATH = "100mil_reverse_character"
 ckpt = tf.train.Checkpoint(transformer=transformer, optimizer=optimizer)
-ckpt_manager = tf.train.CheckpointManager(ckpt, checkpoint_path, max_to_keep=50)
+ckpt_manager = tf.train.CheckpointManager(ckpt, CHECKPOINT_PATH, max_to_keep=50)
 
 if ckpt_manager.latest_checkpoint:
-    ckpt.restore(tf.train.latest_checkpoint(checkpoint_path))
+    ckpt.restore(tf.train.latest_checkpoint(CHECKPOINT_PATH))
 
 
 class Translator(tf.Module):
-    """This is a class which takes care of inference. It loads the saved checkpoint and the necessary
-    tokenizers. The inference begins with the start token (<start>) and ends when the end token(<end>)
-    is met. This class can only work with tf.Tensor objects. The strings shoul gets transformeed into np.arrays
-    before feeding them into this class.
+    """This is a class which takes care of inference. It loads the saved checkpoint and
+    the necessary tokenizers. The inference begins with the start token (<start>) and
+    ends when the end token(<end>) is met. This class can only work with tf.Tensor objects.
+    The strings shoul gets transformeed into np.arrays before feeding them into this class.
     """
 
     def __init__(
-        self, targ_max_length, inp_max_length, inp_lang, targ_lang, transformer
+        self, targ_max_length_input, inp_max_length_input, inp_lang_input,
+         targ_lang_input, transformer_input
     ):
         """Load the tokenizers, the maximum input and output length and the transformer model.
 
         Args:
-            targ_max_length ([type]): Maximum length of a string which can get predicted.
-            inp_max_length ([type]): Maximum length of an input string.
-            inp_lang ([type]): Input tokenizer, defines which charater is assigned to what token.
-            targ_lang ([type]): Output tokenizer, defines which charater is assigned to what token.
-            transformer ([type]): The transformer model.
+            targ_max_length_input ([type]): Maximum length of a string which can
+                                            get predicted.
+            inp_max_length_input ([type]): Maximum length of input string.
+            inp_lang_input ([type]): Input tokenizer, defines which
+                                    charater is assigned to what token.
+            targ_lang_input ([type]): Output tokenizer, defines which charater
+                                        is assigned to what token.
+            transformer_input ([type]): The transformer model.
         """
-        self.targ_max_length = targ_max_length
-        self.inp_max_length = inp_max_length
-        self.inp_lang = inp_lang
-        self.targ_lang = targ_lang
-        self.transformer = transformer
+        self.targ_max_length = targ_max_length_input
+        self.inp_max_length = inp_max_length_input
+        self.inp_lang = inp_lang_input
+        self.targ_lang = targ_lang_input
+        self.transformer = transformer_input
 
     def __call__(self, sentence: tf.Tensor[tf.int32]) -> tf.Tensor[tf.int64]:
         """This fuction takes in the tokenized input of a SMILES string or an IUPAC name
@@ -116,7 +124,7 @@ class Translator(tf.Module):
         output_array = tf.TensorArray(dtype=tf.int64, size=0, dynamic_size=True)
         output_array = output_array.write(0, start)
 
-        for t in tf.range(targ_max_length):
+        for time_step in tf.range(targ_max_length):
             output = tf.transpose(output_array.stack())
             enc_padding_mask, combined_mask, dec_padding_mask = helper.create_masks(
                 encoder_input, output
@@ -138,7 +146,7 @@ class Translator(tf.Module):
 
             predicted_id = tf.argmax(predictions, axis=-1)
 
-            output_array = output_array.write(t + 1, predicted_id[0])
+            output_array = output_array.write(time_step + 1, predicted_id[0])
 
             if predicted_id == end:
                 break
@@ -154,8 +162,8 @@ translator = Translator(
 
 
 class ExportTranslator(tf.Module):
-    """This class wraps the inference class into a module into tf.Module sub-class, with a tf.function on the __call__ method.
-    So we could export the model as a tf.saved_model.
+    """This class wraps the inference class into a module into tf.Module sub-class,
+    with a tf.function on the __call__ method. So we could export the model as a tf.saved_model.
     """
 
     def __init__(self, translator):

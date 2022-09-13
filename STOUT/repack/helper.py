@@ -1,62 +1,66 @@
-import tensorflow as tf
-import tensorflow.keras as keras
+""" contains helper functions"""
 import re
 import unicodedata
+import subprocess
+import tensorflow as tf
+from tensorflow import keras
 import numpy as np
 import pystow
-import subprocess
 
 # Converts the unicode file to ascii
-def unicode_to_ascii(s: str) -> str:
+def unicode_to_ascii(sentence : str) -> str:
     """Converts a unicode string to an ASCII string
 
     Args:
-        s (str): Takes a string in unicode format.
+        st (str): Takes a string in unicode format.
 
     Returns:
         str: returns a ASCII formatted string.
     """
 
     return "".join(
-        c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn"
+        count for count in unicodedata.normalize("NFD", sentence) \
+        if unicodedata.category(count) != "Mn"
     )
 
 
-def preprocess_sentence(w: str) -> str:
-    """Takes in a sentence, removes white spaces and generates a clean sentence. At the begining of the sentesnce a <start> token will be added
+def preprocess_sentence(sentence : str) -> str:
+    """Takes in a sentence, removes white spaces and generates a clean sentence.
+    At the begining of the sentesnce a <start> token will be added
     and at the end an <end> token will be added and the modified sentence will be returned.
 
     Args:
-        w (str): input sentence to be modified.
+        sentence (str): input sentence to be modified.
 
     Returns:
         str: modified sentence with start and end tokens.
     """
-    w = unicode_to_ascii(w.strip())
+    sentence = unicode_to_ascii(sentence.strip())
 
     # creating a space between a word and the punctuation following it
     # eg: "he is a boy." => "he is a boy ."
-    # Reference:- https://stackoverflow.com/questions/3645931/python-padding-punctuation-with-white-spaces-keeping-punctuation
-    w = re.sub(r"([?.!,¿])", r" \1 ", w)
-    w = re.sub(r'[" "]+', " ", w)
+    # Reference:-
+    # https://stackoverflow.com/questions/3645931/python-padding-punctuation-with-white-spaces-keeping-punctuation
+    sentence = re.sub(r"([?.!,¿])", r" \1 ", sentence)
+    sentence = re.sub(r'[" "]+', " ", sentence)
 
     # replacing everything with space except (a-z, A-Z, ".", "?", "!", ",")
     # w = re.sub(r"[^a-zA-Z?.!,¿]+", " ", w)
 
-    w = w.strip()
+    sentence = sentence.strip()
 
     # adding a start and an end token to the sentence
     # so that the model know when to start and stop predicting.
-    w = "<start> " + w + " <end>"
-    return w
+    sentence = "<start> " + sentence + " <end>"
+    return sentence
 
 
-def tokenize_input(input_SMILES: str, inp_lang, inp_max_length: int) -> np.array:
+def tokenize_input(input_smiles: str, inp_lang, inp_max_length: int) -> np.array:
     """This function takes a user input SMILES and tokenizes it
        to feed it to the model.
 
     Args:
-        input_SMILES (string): SMILES string given by the user.
+        input_smiles (string): SMILES string given by the user.
         inp_lang: keras_preprocessing.text.Tokenizer object with input language.
         inp_max_length: maximum number of characters in the input language.
 
@@ -64,7 +68,7 @@ def tokenize_input(input_SMILES: str, inp_lang, inp_max_length: int) -> np.array
         tokenized_input (np.array): The SMILES get split into meaningful chunks
         and gets converted into meaningful tokens. The tokens are arrays.
     """
-    sentence = preprocess_sentence(input_SMILES)
+    sentence = preprocess_sentence(input_smiles)
     inputs = [inp_lang.word_index[i] for i in sentence.split(" ")]
     tokenized_input = keras.preprocessing.sequence.pad_sequences(
         [inputs], maxlen=inp_max_length, padding="post"
@@ -98,11 +102,28 @@ def detokenize_output(predicted_array: np.array, targ_lang) -> str:
 
 
 def create_look_ahead_mask(size):
+    """ create a look ahead mask
+    Args:
+        size : size of the mask
+    Returns :
+        mask : the mask
+    """
     mask = 1 - tf.linalg.band_part(tf.ones((size, size)), -1, 0)
     return mask  # (seq_len, seq_len)
 
 
 def create_padding_mask(seq):
+
+    """
+    creates padding mask
+
+    Args:
+        seq : the target for the mask
+
+    Returns:
+        the padding_mask
+
+    """
     seq = tf.cast(tf.math.equal(seq, 0), tf.float32)
 
     # add extra dimensions to add the padding
@@ -111,6 +132,16 @@ def create_padding_mask(seq):
 
 
 def create_masks(inp, tar):
+    """ function to create encoder padding masks
+    Args :
+        inp : input for which the mask is created
+        tar : target dimension for the mask
+
+    Returns :
+        enc_padding_mask : the encoder padding mask
+        dec_padding_mask : the decoder_padding mask
+        combined_mask : the combined mask of the above
+    """
     # Encoder padding mask
     enc_padding_mask = create_padding_mask(inp)
 
@@ -127,7 +158,8 @@ def create_masks(inp, tar):
 
     return enc_padding_mask, combined_mask, dec_padding_mask
 
-# Downloads the model and unzips the file downloaded, if the model is not present on the working directory.
+# Downloads the model and unzips the file downloaded,
+# if the model is not present on the working directory.
 def download_trained_weights(model_url: str, model_path: str, verbose=1):
     """This function downloads the trained models and tokenizers to a default location.
     After downloading the zipped file the function unzips the file automatically.
@@ -153,5 +185,6 @@ def download_trained_weights(model_url: str, model_path: str, verbose=1):
                 model_path.as_posix(),
                 "-d",
                 model_path.parent.as_posix(),
-            ]
+            ],
+            check = True
         )
