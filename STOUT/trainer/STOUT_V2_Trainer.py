@@ -1,16 +1,24 @@
-import tensorflow as tf
+""" training module for STOUT """
+#pylint: disable=wrong-import-position
+import re
+import pickle
+from datetime import datetime
+import time
+import sys
 
+import matplotlib.pyplot as plt
 import matplotlib as mpl
 
 mpl.use("Agg")
-import matplotlib.pyplot as plt
-import os
-import time
-import sys
-import pickle
-from datetime import datetime
+#import os
+import tensorflow as tf
 import nmt_model_transformer
-import re
+#pylint: enable=wrong-import-position
+
+
+
+
+
 
 tpu = tf.distribute.cluster_resolver.TPUClusterResolver(tpu="node-2")
 print("Running on TPU ", tpu.master())
@@ -18,40 +26,44 @@ print("Running on TPU ", tpu.master())
 tf.config.experimental_connect_to_cluster(tpu)
 tf.tpu.experimental.initialize_tpu_system(tpu)
 strategy = tf.distribute.TPUStrategy(tpu)
-print("Number of devices: {}".format(strategy.num_replicas_in_sync))
+print(f"Number of devices: {strategy.num_replicas_in_sync}")
 
 
-f = open("Training_Report.txt", "w")
+f = open("Training_Report.txt", "w",encoding = "utf-8")
 sys.stdout = f
 
 numbers = re.compile(r"(\d+)")
 
 
-def numericalSort(value):
+def numerical_sort(value):
+    """ performs numerical sort """
     parts = numbers.split(value)
     parts[1::2] = map(int, parts[1::2])
     return parts
 
-
-inp_lang = pickle.load(open("tokenizer_input.pkl", "rb"))
-targ_lang = pickle.load(open("tokenizer_target.pkl", "rb"))
-inp_max_length = pickle.load(open("max_length_inp.pkl", "rb"))
-targ_max_length = pickle.load(open("max_length_targ.pkl", "rb"))
+with open("tokenizer_input.pkl", "rb") as file:
+    inp_lang = pickle.load(file)
+with open("tokenizer_target.pkl", "rb") as file:
+    targ_lang = pickle.load(file)
+with open("max_length_inp.pkl", "rb") as file:
+    inp_max_length = pickle.load(file)
+with open("max_length_targ.pkl", "rb") as file:
+    targ_max_length = pickle.load(file)
 
 print(datetime.now().strftime("%Y/%m/%d %H:%M:%S"), "Data loaded", flush=True)
 
-total_data = 1000000
+TOTAL_DATA = 1000000
 
 EPOCHS = 50
-num_layer = 4
-d_model = 512
-dff = 2048
-num_heads = 8
-dropout_rate = 0.1
+NUM_LAYER = 4
+D_MODEL = 512
+DFF = 2048
+NUM_HEADS = 8
+DROPOUT_RATE = 0.1
 BUFFER_SIZE = 10000
 BATCH_SIZE = 160 * strategy.num_replicas_in_sync
-steps_per_epoch = total_data // BATCH_SIZE
-num_steps = total_data // BATCH_SIZE
+steps_per_epoch = TOTAL_DATA // BATCH_SIZE
+num_steps = TOTAL_DATA // BATCH_SIZE
 
 input_vocab_size = len(inp_lang.word_index) + 1
 target_vocab_size = len(targ_lang.word_index) + 1
@@ -60,6 +72,7 @@ AUTO = tf.data.experimental.AUTOTUNE
 
 
 def read_tfrecord(example):
+    """ reads tensorflow record for a given example  and decodes the result for a given example """
     feature = {
         #'image_id': tf.io.FixedLenFeature([], tf.string),
         "input_selfies": tf.io.FixedLenFeature([], tf.string),
@@ -76,13 +89,14 @@ def read_tfrecord(example):
 
 
 def get_training_dataset(batch_size=BATCH_SIZE, buffered_size=BUFFER_SIZE):
-
+    """ loads the training size and initialises the dataloader with given
+        buffer size and batch size """
     options = tf.data.Options()
     filenames = sorted(
         tf.io.gfile.glob(
             "gs://tpu-test-koh/STOUT_V2/STOUT_V2_development/1mio_SMI_character/TF_rec/*.tfrecord"
         ),
-        key=numericalSort,
+        key=numerical_sort,
     )
 
     dataset = tf.data.TFRecordDataset(filenames, num_parallel_reads=AUTO)
@@ -99,19 +113,22 @@ def get_training_dataset(batch_size=BATCH_SIZE, buffered_size=BUFFER_SIZE):
 
 
 def get_validation_dataset(batch_size=BATCH_SIZE, buffered_size=BUFFER_SIZE):
+    """ loads the validation size and initialises the dataloader with
+    given buffer size and batch size """
+
 
     options = tf.data.Options()
     filenames = sorted(
         tf.io.gfile.glob(
             "gs://tpu-test-koh/STOUT_V2/STOUT_V2_development/1mio_SMI_character/TF_rec/*.tfrecord"
         ),
-        key=numericalSort,
+        key=numerical_sort,
     )
 
     dataset = tf.data.TFRecordDataset(filenames, num_parallel_reads=AUTO)
     # dataset_txt = tf.data.Dataset.from_tensor_slices((cap_train))
 
-    train_dataset = (
+    validation_dataset = (
         dataset.with_options(options)
         .map(read_tfrecord, num_parallel_calls=AUTO)
         .shuffle(buffered_size)
@@ -122,7 +139,9 @@ def get_validation_dataset(batch_size=BATCH_SIZE, buffered_size=BUFFER_SIZE):
 
 
 class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
+    "Class to perform learning rate scheduling "
     def __init__(self, d_model, warmup_steps=5000):
+        """ initialises the learning rate scheduler class"""
         super(CustomSchedule, self).__init__()
 
         self.d_model = d_model
@@ -131,6 +150,7 @@ class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
         self.warmup_steps = warmup_steps
 
     def __call__(self, step):
+        """ functionality for scheduling idea"""
         arg1 = tf.math.rsqrt(step)
         arg2 = step * (self.warmup_steps ** -1.5)
 
@@ -138,11 +158,13 @@ class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
 
 
 def create_look_ahead_mask(size):
+    " creates a look ahead mask of a given size "
     mask = 1 - tf.linalg.band_part(tf.ones((size, size)), -1, 0)
     return mask  # (seq_len, seq_len)
 
 
 def create_padding_mask(seq):
+    """ creates a padding mask of given size """
     seq = tf.cast(tf.math.equal(seq, 0), tf.float32)
 
     # add extra dimensions to add the padding
@@ -151,6 +173,7 @@ def create_padding_mask(seq):
 
 
 def create_masks(inp, tar):
+    """ creates encoding and decoding padding mask """
     # Encoder padding mask
     enc_padding_mask = create_padding_mask(inp)
 
@@ -172,8 +195,9 @@ with strategy.scope():
     # encoder = nmt_model.Encoder(vocab_inp_size, embedding_dim, units)
     # decoder = nmt_model.Decoder(vocab_tar_size, embedding_dim, units)
 
-    # optimizer = tf.keras.optimizers.Adam(learning_rate=0.0005, beta_1=0.9, beta_2=0.999, epsilon=1e-07, amsgrad=False)
-    learning_rate = CustomSchedule(d_model)
+    # optimizer = tf.keras.optimizers.Adam(learning_rate=0.0005, beta_1=0.9, beta_2=0.999,
+    #                                       epsilon=1e-07, amsgrad=False)
+    learning_rate = CustomSchedule(D_MODEL)
     optimizer = tf.keras.optimizers.Adam(
         learning_rate, beta_1=0.9, beta_2=0.98, epsilon=1e-9
     )
@@ -182,6 +206,7 @@ with strategy.scope():
     )
 
     def loss_function(real, pred):
+        """ computes the loss given labels and prediction """
         mask = tf.math.logical_not(tf.math.equal(real, 0))
         loss_ = loss_object(real, pred)
 
@@ -191,6 +216,7 @@ with strategy.scope():
         return tf.reduce_mean(loss_)
 
     def accuracy_function(real, pred):
+        """ computes accuracy given labels and prediction"""
         accuracies = tf.math.equal(
             real, tf.cast(tf.argmax(pred, axis=2), dtype=tf.int32)
         )
@@ -213,28 +239,28 @@ with strategy.scope():
 
     # Initialize Transformer
     transformer = nmt_model_transformer.Transformer(
-        num_layer,
-        d_model,
-        num_heads,
-        dff,
+        NUM_LAYER,
+        D_MODEL,
+        NUM_HEADS,
+        DFF,
         input_vocab_size,
         target_vocab_size,
         inp_max_length,
         targ_max_length,
-        rate=dropout_rate,
+        rate=DROPOUT_RATE,
     )
 
 
-checkpoint_path = (
+CHECKPOINT_PATH = (
     "gs://tpu-test-koh/STOUT_V2/STOUT_V2_development/1mio_SMI_character/checkpoints/"
 )
 ckpt = tf.train.Checkpoint(transformer=transformer, optimizer=optimizer)
-ckpt_manager = tf.train.CheckpointManager(ckpt, checkpoint_path, max_to_keep=150)
+ckpt_manager = tf.train.CheckpointManager(ckpt, CHECKPOINT_PATH, max_to_keep=150)
 
-start_epoch = 0
+START_EPOCH = 0
 if ckpt_manager.latest_checkpoint:
-    ckpt.restore(tf.train.latest_checkpoint(checkpoint_path))
-    start_epoch = int(ckpt_manager.latest_checkpoint.split("-")[-1])
+    ckpt.restore(tf.train.latest_checkpoint(CHECKPOINT_PATH))
+    START_EPOCH = int(ckpt_manager.latest_checkpoint.split("-")[-1])
 
 per_replica_batch_size = BATCH_SIZE // strategy.num_replicas_in_sync
 
@@ -253,7 +279,9 @@ train_step_signature = [
 
 @tf.function
 def train_step(iterator):
+    """ runs each traing step"""
     def step_fn(inputs):
+        """ maining functionality of a forward pass and subsequent backpropagation"""
         inp, target = inputs
         loss = 0
 
@@ -284,7 +312,9 @@ def train_step(iterator):
 
 @tf.function
 def validation_step(iterator):
+    """ performs validation functionality"""
     def step_fn(inputs):
+        """ performs the forward pass and the subsequent backprop for validation"""
         img_tensor, target = inputs
 
         tar_inp = target[:, :-1]
@@ -317,7 +347,7 @@ accuracy_plot = []
 val_loss_plot = []
 val_acc = []
 
-for epoch in range(start_epoch, EPOCHS):
+for epoch in range(START_EPOCH, EPOCHS):
     start = time.time()
     batch = 0
     validation_batch = 0
@@ -331,9 +361,8 @@ for epoch in range(start_epoch, EPOCHS):
 
         if batch % 100 == 0:
             print(
-                "Epoch {} Batch {} Loss {:.4f} Accuracy {:.4f}".format(
-                    epoch + 1, batch, train_loss.result(), train_accuracy.result()
-                ),
+                f"Epoch {epoch + 1} Batch {batch} Loss : {train_loss.result()} \
+                Accuracy {train_accuracy.result()}",
                 flush=True,
             )
 
@@ -343,14 +372,13 @@ for epoch in range(start_epoch, EPOCHS):
             ckpt_manager.save()
 
             print(
-                "Epoch {} Training_Loss {:.4f} Accuracy {:.4f}".format(
-                    epoch + 1, train_loss.result(), train_accuracy.result()
-                ),
+                f"Epoch {epoch + 1} Training_Loss : {train_loss.result()} \
+                Accuracy  : {train_accuracy.result()}",
                 flush=True,
             )
             print(
                 datetime.now().strftime("%Y/%m/%d %H:%M:%S"),
-                "Time taken for 1 epoch {} sec\n".format(time.time() - start),
+                f"Time taken for 1 epoch {time.time() -start} sec\n",
                 flush=True,
             )
             break
@@ -364,14 +392,13 @@ for epoch in range(start_epoch, EPOCHS):
         if validation_batch == validation_steps:
 
             print(
-                "Validation_Loss {:.4f} Accuracy {:.4f}".format(
-                    validation_loss.result(), validation_accuracy.result()
-                ),
+                f"Validation_Loss : { validation_loss.result()} \
+                Accuracy : {validation_accuracy.result()}",
                 flush=True,
             )
             print(
                 datetime.now().strftime("%Y/%m/%d %H:%M:%S"),
-                "Time taken for validation {} sec\n".format(time.time() - start_val),
+                f"Time taken for validation {time.time() - start_val} sec\n",
                 flush=True,
             )
             val_loss_plot.append(validation_loss.result().numpy())

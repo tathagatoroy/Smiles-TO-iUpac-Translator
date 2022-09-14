@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-
+""" Setting up the Project """
 import setuptools
 
 with open("README.md", "r") as fh:
